@@ -1,34 +1,18 @@
 import { Bob } from 'alice-bob'
-import { Point, Rect } from 'geometrik'
-import { Popup } from './x-popup'
-import type { PopupSceneCore } from './x-popup'
-
-// type Popup = {
-//   popupDest: Point
-//   popupRect: Rect
-//   prevPopupRect: Rect
-//   innerRect: Rect
-//   boxRect: Rect
-//   targetRect: Rect
-//   viewportRect: Rect
-//   viewportInnerRect: Rect
-
-//   collisions: Map<Popup, Point>
-
-//   touchesInner: boolean
-//   touchesBorder: boolean
-//   touchesViewport: boolean
-
-//   insideBox: boolean
-//   insideInner: boolean
-//   insideViewport: boolean
-// }
+import { Polygon, Rect } from 'geometrik'
+import { agentOptions, Popup } from './x-popup-core'
+import type { PopupSceneCore } from './x-popup-core'
 
 export type PopupScene = {
+  core: PopupSceneCore
+  popups: Map<string, Popup>
   update: () => void
   containBorder: (a: Popup, newPrev?: Rect) => void
-  popups: Set<Popup>
+
+  // agent methods
   add: (popup: Popup) => Promise<void>
+  delete: (popup: Popup) => Promise<void>
+  updatePopup: (popup: Popup, data: Popup) => Promise<void>
 }
 
 export const createPopupScene = (): PopupScene => {
@@ -68,16 +52,28 @@ export const createPopupScene = (): PopupScene => {
 
     next.containSelf(a.innerRect!).containSelf(a.viewportRect!)
   }
-  const popups = new Set<Popup>()
+  const popups = new Map<string, Popup>()
   const scene = {
     popups,
     add: async (popup: Popup) => {
-      popups.add(popup)
+      popups.set(popup.id, popup)
+      popup.put(scene as PopupScene)
+    },
+    delete: async (popup: Popup) => {
+      popups.delete(popup.id)
+    },
+    updatePopup: async (popup: Popup, data: Popup) => {
+      const p = popups.get(popup.id)
+      if (!p) {
+        console.warn('Popup not found locally', popup, data)
+        return
+      }
+      Object.assign(p, data)
     },
     containBorder,
     update: (() => {
       // move everything within boundaries
-      for (const a of popups) {
+      for (const a of popups.values()) {
         a.touchesBorder = false
 
         if (
@@ -119,7 +115,7 @@ export const createPopupScene = (): PopupScene => {
         }
       }
 
-      let pp = [...popups]
+      let pp = [...popups.values()]
 
       const solve = () => {
         // solve collisions
@@ -146,12 +142,12 @@ export const createPopupScene = (): PopupScene => {
       }
 
       const apply = () => {
-        for (const a of popups) {
+        for (const a of popups.values()) {
           if (a.popupRect && a.innerRect) {
             prev = a.popupRect.clone()
 
             if (a.collisions.size) {
-              const c = Point
+              const c = Polygon
                 .sum([...a.collisions.values()])
                 .normalizeSelf(a.collisions.size)
 
@@ -208,7 +204,7 @@ export const createPopupScene = (): PopupScene => {
         apply()
       }
 
-      for (const a of popups) {
+      for (const a of popups.values()) {
         if (
           a.touchesBorder
           && a.popupRect
@@ -231,21 +227,27 @@ export const createPopupScene = (): PopupScene => {
         }
       }
 
-      for (const a of popups) {
+      for (const a of popups.values()) {
         if (a.popupRect) {
           const diff = a.prevPopupRect.screen(a.popupRect).pos
-          if (diff.absoluteSum() > .0025) a.popupRect = a.popupRect.clone()
+          if (diff.absoluteSum() > .0025) {
+            a.popupRect = a.popupRect.clone()
+          }
         }
       }
     }),
   }
 
-  return scene
+  return scene as PopupScene
 }
 
-const [worklet] = new Bob<PopupScene, PopupSceneCore>(
-  data => self.postMessage(data),
-  createPopupScene()
-).agents({ debug: false })
+const scene = createPopupScene()
 
-self.onmessage = ({ data }) => worklet.receive(data)
+const [worker, core] = new Bob<PopupScene, PopupSceneCore>(
+  data => void self.postMessage(data),
+  scene
+).agents(agentOptions)
+
+scene.core = core
+
+self.onmessage = ({ data }) => worker.receive(data)

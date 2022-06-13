@@ -1,7 +1,7 @@
 import { Point } from 'geometrik'
 import { getRelativeMouseFromEvent } from 'relative-mouse'
 import { SurfaceElement, SurfaceMoveElement, SurfaceResizeElement } from 'x-surface'
-import { createPopupScene, PopupElement } from '../src'
+import { createPopupScene, PopupElement } from '..'
 
 const dpr = window.devicePixelRatio
 
@@ -76,7 +76,6 @@ x-surface-resize {
   position: absolute;
   left: 0;
   top: 0;
-  transform: scale(2);
 }
 x-popup::part(contents) {
   box-sizing: border-box;
@@ -84,7 +83,7 @@ x-popup::part(contents) {
   font-family: monospace;
 }
 x-popup.label::part(contents) {
-  border: var(--1px) solid #444;
+  border: 1px solid #444;
   background: #000;
   padding: 10px 12px;
   cursor: pointer;
@@ -123,8 +122,8 @@ x-popup.contextmenu::part(contents) {
 .menu-inner {
   position: relative;
   display: inline-flex;
-  border: var(--1px) solid #fff;
-  margin: calc(var(--1px) * 14.5);
+  border: 1px solid #fff;
+  margin: 14.5px;
   padding: 6px 0px;
   flex-flow: column nowrap;
   z-index: 2;
@@ -227,19 +226,19 @@ const putMenu = (pos: Point) => {
   // const w = Math.max(2, 20 / surface.matrix!.a)
   // const h = Math.max(2, 20 / surface.matrix!.d)
 
-  div.dataset.x = '' + (pos.x - (3 / surface.matrix!.a)) // - 0.5 * surface.matrix!.a)
-  div.dataset.y = '' + (pos.y - (3 / surface.matrix!.d)) // + 0 / surface.matrix!.d)
+  div.dataset.x = '' + Math.round(pos.x - (surface.matrix!.a)) // - 0.5 * surface.matrix!.a)
+  div.dataset.y = '' + Math.round(pos.y - (surface.matrix!.d)) // + 0 / surface.matrix!.d)
   div.dataset.width = '' + w
   div.dataset.height = '' + h
   // console.log(div.dataset)
-  // div.style.left = pos.x + offset.x + 'px'
-  // div.style.top = pos.y + offset.y + 'px'
+  div.style.left = pos.x + 'px'
+  div.style.top = pos.y + 'px'
   surface.appendChild(div)
 
   cp = new PopupElement()
   popupsDiv.appendChild(cp)
   cp.classList.add('contextmenu')
-  cp.placement = 's'
+  cp.placement = 'w'
   cp.contain = true
   cp.innerHTML = /*html*/ `
     <div class="menu">
@@ -254,9 +253,9 @@ const putMenu = (pos: Point) => {
   cp.scene = menuScene // createPopupScene()
   cp.box = surface
   cp.target = div
-  setTimeout(() => {
-    cp.visible = true
-  }, 20)
+  // setTimeout(() => {
+  cp.visible = false
+  // }, 2000)
 
   window.addEventListener('pointerup', () => {
     window.addEventListener('pointerup', cpRemove, { once: true, capture: true })
@@ -278,7 +277,7 @@ popupsDiv.oncontextmenu = surface.oncontextmenu = e => {
   popup.visible = false
   // popup.scene = scene
   // popup.scene = null menuScene
-  popup.box = document.querySelector(`x-surface`) as HTMLElement
+  popup.box = document.querySelector(`x-surface`) as any
   popup.target = document.querySelector(`.target.menubutton`) as HTMLElement
 }
 

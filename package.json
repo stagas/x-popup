@@ -96,6 +96,7 @@
   "dependencies": {
     "alice-bob": "file:../alice-bob",
     "animatrix": "file:../animatrix",
+    "everyday-utils": "file:../everyday-utils",
     "geometrik": "file:../geometrik",
     "get-element-offset": "1.0.1",
     "is-mobile-agent": "file:../is-mobile-agent",
