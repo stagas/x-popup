@@ -1,7 +1,7 @@
 import { Point } from 'geometrik'
 import { getRelativeMouseFromEvent } from 'relative-mouse'
 import { SurfaceElement, SurfaceMoveElement, SurfaceResizeElement } from 'x-surface'
-import { createPopupScene, PopupElement } from '..'
+import { PopupElement, PopupSceneLocal } from '..'
 
 const dpr = window.devicePixelRatio
 
@@ -10,6 +10,7 @@ customElements.define('x-surface-move', SurfaceMoveElement)
 customElements.define('x-surface-resize', SurfaceResizeElement)
 
 customElements.define('x-popup', PopupElement)
+
 document.body.innerHTML = /*html*/ `
 <style>
 :root {
@@ -95,7 +96,7 @@ x-popup.contextmenu::part(arrow) {
   z-index: 10;
 }
 x-popup.contextmenu::part(contents) {
-  padding: 12px;
+  /*padding: 12px;*/
   border-color: #fff;
 }
 .popups {
@@ -146,7 +147,7 @@ x-popup.contextmenu::part(contents) {
   width: 1px;
   height: 1px;
   border: none;
-  background: transparent;
+  background: #f00;
 }
 </style>
 
@@ -159,18 +160,18 @@ x-popup.contextmenu::part(contents) {
 </x-surface>
 
 <div class="popups" onwheel="surface.dispatchEvent(new WheelEvent('wheel', event))">
-<x-popup class="tl label" arrowinner placement="n" visible onclick="surface.centerItem(tl)">bass</x-popup>
-<x-popup class="tr label" arrowinner placement="n" visible onclick="surface.centerItem(tr)">kick</x-popup>
-<x-popup class="br label" arrowinner placement="n" visible onclick="surface.centerItem(br)">filter</x-popup>
-<x-popup class="bl label" arrowinner placement="n" visible onclick="surface.centerItem(bl)">synth</x-popup>
+<x-popup class="tl label" arrowinner placement="nwr" visible onclick="surface.centerItem(tl)">bass</x-popup>
+<x-popup class="tr label" arrowinner placement="nwr" visible onclick="surface.centerItem(tr)">kick</x-popup>
+<x-popup class="br label" arrowinner placement="nwr" visible onclick="surface.centerItem(br)">filter</x-popup>
+<x-popup class="bl label" arrowinner placement="nwr" visible onclick="surface.centerItem(bl)">synth</x-popup>
 <x-popup class="c label" arrowinner placement="n" visible onclick="surface.centerItem(c)">output</x-popup>
-<x-popup class="m popup-menu" placement="s" visible>
+<!--<x-popup class="m popup-menu" placement="s" visible center>
   <div class="menu">
     <button>menu</button>
     <button>with</button>
     <button>selections</button>
   </div>
-</x-popup>
+</x-popup>-->
 </div>
 `
 
@@ -180,17 +181,22 @@ x-popup.contextmenu::part(contents) {
 // fontEl.innerHTML = 'html{font-size:' + rem + 'px!important;}';
 
 const popupsDiv = document.querySelector('.popups') as HTMLDivElement
-const labelScene = createPopupScene()
-const menuScene = createPopupScene()
 const surface = document.querySelector(`x-surface`) as SurfaceElement
+const labelScene = new PopupSceneLocal(surface)
+const menuScene = new PopupSceneLocal(surface)
 for (const pos of 'tl tr br bl c'.split(' ')) {
   try {
     const popup = document.querySelector(`x-popup.${pos}`) as PopupElement
     popup.scene = labelScene
-    popup.box = surface
-    popup.target = document.querySelector(`.target.${pos}`) as HTMLElement
+    popup.surface = surface
+    const target = document.querySelector(`.target.${pos}`) as HTMLElement
+    popup.target = target
   } catch {}
 }
+;[...document.querySelectorAll('x-surface-move')].forEach(el => {
+  el.surface = surface
+  el.target = el.parentElement
+})
 
 document.body.oncontextmenu = e => {
   e.preventDefault()
@@ -200,10 +206,12 @@ let cp: PopupElement
 let cpDiv: HTMLDivElement
 const cpRemove = () => {
   if (cpDiv) {
-    setTimeout(x => x.remove(), 50, cpDiv)
+    cpDiv.remove()
+    // setTimeout(x => x.remove(), 50, cpDiv)
   }
   if (cp) {
-    setTimeout(x => x.remove(), 50, cp)
+    cp.remove()
+    // setTimeout(x => x.remove(), 50, cp)
   }
   window.removeEventListener('pointerup', cpRemove, { capture: true })
 }
@@ -226,8 +234,8 @@ const putMenu = (pos: Point) => {
   // const w = Math.max(2, 20 / surface.matrix!.a)
   // const h = Math.max(2, 20 / surface.matrix!.d)
 
-  div.dataset.x = '' + Math.round(pos.x - (surface.matrix!.a)) // - 0.5 * surface.matrix!.a)
-  div.dataset.y = '' + Math.round(pos.y - (surface.matrix!.d)) // + 0 / surface.matrix!.d)
+  div.dataset.x = '' + (pos.x - ((w / 2) / surface.matrix!.a)) // - 0.5 * surface.matrix!.a)
+  div.dataset.y = '' + (pos.y - ((h / 2) / surface.matrix!.d)) // + 0 / surface.matrix!.d)
   div.dataset.width = '' + w
   div.dataset.height = '' + h
   // console.log(div.dataset)
@@ -239,7 +247,8 @@ const putMenu = (pos: Point) => {
   popupsDiv.appendChild(cp)
   cp.classList.add('contextmenu')
   cp.placement = 'w'
-  cp.contain = true
+  // cp.contain = true
+  cp.center = true
   cp.innerHTML = /*html*/ `
     <div class="menu">
       <div class="menu-inner">
@@ -250,11 +259,11 @@ const putMenu = (pos: Point) => {
     </div>
   `
 
-  cp.scene = menuScene // createPopupScene()
-  cp.box = surface
+  cp.surface = surface
   cp.target = div
+  cp.scene = menuScene // createPopupScene()
   // setTimeout(() => {
-  cp.visible = false
+  // cp.visible = true
   // }, 2000)
 
   window.addEventListener('pointerup', () => {
@@ -272,22 +281,30 @@ popupsDiv.oncontextmenu = surface.oncontextmenu = e => {
   putMenu(pos)
 }
 
-{
-  const popup = document.querySelector(`x-popup.m`) as PopupElement
-  popup.visible = false
-  // popup.scene = scene
-  // popup.scene = null menuScene
-  popup.box = document.querySelector(`x-surface`) as any
-  popup.target = document.querySelector(`.target.menubutton`) as HTMLElement
-}
-
-setTimeout(() => {
-  putMenu(new Point(100, -50))
-}, 100)
+// {
+//   const popup = document.querySelector(`x-popup.m`) as PopupElement
+//   // popup.visible = false
+//   // popup.scene = scene
+//   // popup.scene = null menuScene
+//   popup.surface = document.querySelector(`x-surface`) as any
+//   popup.target = document.querySelector(`.target.menubutton`) as HTMLElement
+// }
 
 // setTimeout(() => {
-//   const s = document.querySelector('x-surface') as SurfaceElement // .scrollTo(window.visualViewport.width + 650, window.visualViewport.height + 270)
-//   s.matrix!.e = 840
-//   s.matrix!.f = 850
-//   s.matrix = new DOMMatrix(s.matrix!)
+//   putMenu(new Point(100, -50))
 // }, 100)
+
+setTimeout(() => {
+  const s = document.querySelector('x-surface') as SurfaceElement // .scrollTo(window.visualViewport.width + 650, window.visualViewport.height + 270)
+  s.viewMatrix.a = 1.21223
+  s.viewMatrix.e = -11222.8522
+  s.viewMatrix.f = 26851.164
+  // s.viewMatrix!.e = 1116
+  // s.viewMatrix!.f = -1049
+  s.viewMatrix = new DOMMatrix(s.viewMatrix!)
+  // console.log('yes')
+
+  s.context.effect(({ viewMatrix }) => {
+    // console.log(viewMatrix.a, viewMatrix.e, viewMatrix.f)
+  })
+}, 300)

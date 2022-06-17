@@ -1,2 +1,3 @@
+export * from './popup-core'
+export * from './popup-scene-local'
 export * from './x-popup'
-export * from './x-popup-core'

@@ -1,312 +1,158 @@
 /** @jsxImportSource mixter/jsx */
-import { AnimSettings } from 'animatrix'
-import { Matrix, Placement, Point, Rect } from 'geometrik'
+import { Matrix, Placement, Rect } from 'geometrik'
 import { isMobileAgent } from 'is-mobile-agent'
-import { attrs, chain, mixter, on, onresize, props, queue, shadow, state } from 'mixter'
+import { attrs, chain, mixter, on, props, shadow, state } from 'mixter'
 import { jsx, refs } from 'mixter/jsx'
-import { pick } from 'pick-omit'
-import { Popup } from './x-popup-core'
-import type { PopupScene } from './x-popup-worker'
-
-export type { Popup, PopupScene }
-export type { Agent, Alice, AliceBob, Bob, Payload } from 'alice-bob'
+import { SurfaceElement } from 'x-surface'
+import { Popup } from './popup'
+import { PopupScene } from './popup-core'
 
 const style = /*css*/ `
 :host {
   position: absolute;
-  width: 100%;
-  height: 100%;
 }
-
+:host(:not([placed])) {
+  visibility: hidden;
+}
+:host([placed]) {
+  ${
+  isMobileAgent
+    ? 'transition: transform 400ms cubic-bezier(0, 0, 0.75, 1);'
+    : 'transition: transform 100ms cubic-bezier(0, 0.25, 0.75, 1);'
+}
+}
 [part=contents] {
-  position: absolute;
+  box-sizing: border-box;
   display: inline-flex;
   user-select: none;
-}
-
-[part=arrow] {
-  position: absolute;
-  pointer-events: none;
-  left: 0;
-  top: 0;
-  width: 15px;
-  height: 20px;
-  stroke: #fff;
-  fill: #000;
-  transform-origin: 0 0 0;
-  transition: transform 500ms cubic-bezier(0, 0.55, 0.25, 1);
-}
-
-:host([arrowinner]) [part=arrow] {
-  width: 6px;
-  height: 10px;
-  fill: #fff;
-}
-
-[part=indicator] {
-  position: fixed;
-  width: 20px;
-  height: 20px;
-  visibility: hidden;
-  font-size: 20px;
-  line-height: 20px;
-  transform-origin: 50% 50%;
-}
-
-:host(:not([visible])) {
-  visibility: hidden;
-}
-
-:host(:not([visible])) [part=contents] {
-  transition: none;
-}
-
-:host([visible]) [part=contents] {
-${
-  isMobileAgent
-    ? 'transition: transform 250ms cubic-bezier(0, 0.35, 0.85, 1);'
-    : 'transition: transform 200ms cubic-bezier(0, 0.55, 0.25, 1);'
-}
-}
-`
+}`
 
 export class PopupElement extends mixter(
   HTMLElement,
   shadow(),
   attrs(
     class {
-      placement: 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' = 'n'
-      visible = Boolean
-      arrow = false
-      arrowInner = false
-      contain = false
-      hideAway = Boolean
+      placement: Placement = 'n'
+      placed = false
+      center = false
     }
   ),
   props(
     class {
+      surface?: SurfaceElement
       scene?: PopupScene
 
-      animSettings?: AnimSettings
-
-      box?: HTMLElement & {
-        rect: Rect
-        matrix: Matrix
-        itemRectsMap: WeakMap<HTMLElement, Rect>
-        animSettings: AnimSettings
-      }
-      boxRect?: Rect
-      viewportRect?: Rect
+      contents?: HTMLDivElement
+      contentsRect?: Rect
 
       target?: HTMLElement
       targetRect?: Rect
 
-      popup?: Popup | null
-      popupRect?: Rect
-      popupDest?: Point
+      popup?: Popup
+      rect?: Rect
 
-      contents?: HTMLSlotElement
-      contentsMatrix = new Matrix()
-      contentsMatrixString?: string
-
-      arrowEl?: SVGSVGElement
-      arrowRect?: Rect
-      arrowMatrix = new Matrix()
-      arrowMatrixString?: string
-
-      draw?: () => void
-      updateBox?: () => void
-      updateTarget?: () => void
-      getPosition?: () => Point
-      placeArrow?: () => number | boolean
-      placePopup?: (placement: Placement) => [Rect, Rect, Placement]
-
-      updatePopup?: (popup: Popup) => void
+      viewMatrix?: Matrix
+      viewportRect?: Rect
     }
   ),
-  state<PopupElement>(({ $, atomic, effect, mutate, mutating, reduce }) => {
+  state<PopupElement>(({ $, effect, reduce }) => {
     const { render } = jsx($)
     const { ref } = refs($)
 
-    $.arrowRect = reduce(({ arrowInner }) =>
-      arrowInner
-        ? new Rect(0, 0, 6, 10)
-        : new Rect(0, 0, 15, 20)
+    // place popup in scene
+
+    effect(({ popup, scene }) => (
+      scene.popups.add(popup), () => scene.popups.delete(popup)
+    ))
+
+    // read data from popup
+
+    effect(({ popup }) =>
+      popup.context.effect(({ rect }) => {
+        $.rect = rect
+      })
     )
 
-    $.updatePopup = reduce(({ popup }) =>
-      queue.raf(atomic(other => {
-        if (!other.popupRect!.equals(popup.popupRect!)) {
-          popup.popupRect = other.popupRect!
+    // write data to popup
 
-          Object.assign(
-            $,
-            pick(other, [
-              'popupRect',
-              'popupDest',
-              'arrowMatrix',
-            ])
-          )
+    $.popup = reduce(({ viewMatrix, center, targetRect, contentsRect, placement }): Popup => {
+      const data: Partial<Popup> = {
+        center,
+        contentsRect,
+        // placement is set once from the element and then
+        // handled entirely in the worker
+        originalPlacement: placement,
+        // we move the target rectangle to our (normal dom) screen space
+        // because its dimensions are in surface space (zoomed/panned etc)
+        targetRect: targetRect.transform(viewMatrix),
+      }
+      if ($.popup) {
+        return Object.assign($.popup, data)
+      } else return new Popup(data)
+    })
+
+    // read contents
+
+    $.contentsRect = reduce(({ contents }): Rect => Rect.fromElement(contents))
+
+    // read target
+
+    $.targetRect = reduce(({ target }): Rect => Rect.fromElement(target))
+
+    effect(({ surface, target: thisTarget }) => {
+      const maybeGetTarget = ({
+        detail: { target, rect },
+      }: {
+        detail: { target: HTMLElement; rect: Rect }
+      }) => {
+        if (target === thisTarget) {
+          $.targetRect = rect.clone()
         }
-      }))
-    )
-
-    effect.once(({ host, scene, popupRect: _ }) => {
-      const popup = $.popup = new Popup()
-      host.id = popup.id
-      popup.set(host)
-      scene.add(popup)
+      }
       return chain(
-        on(scene.core).updatepopup(({ detail: other }) => {
-          if (other.id === popup.id) {
-            $.updatePopup?.(other)
-          }
-        }),
-        async () => {
-          scene.delete(popup)
-          $.popup = null
-        }
+        on(surface).itemmove(maybeGetTarget),
+        on(surface).itemmovestart(maybeGetTarget),
+        on(surface).itemmoveend(maybeGetTarget),
+        //
+        on(surface).itemresize(maybeGetTarget),
+        on(surface).itemresizestart(maybeGetTarget),
+        on(surface).itemresizeend(maybeGetTarget)
       )
     })
 
-    effect(({ scene, contents }) =>
-      onresize(contents, ([entry]) => {
-        const box = entry.borderBoxSize[0]
+    // read scene
 
-        // TODO: this is too fragile/wrong
-        if ($.popupRect) {
-          $.popupRect.width = box.inlineSize
-          $.popupRect.height = box.blockSize
-          $.popupRect = $.popupRect.clone()
-
-          scene.updatePopup(
-            $.popup!,
-            pick($, ['popupRect']) as Popup
-          )
-        } else {
-          $.popupRect = new Rect(0, 0, box.inlineSize, box.blockSize)
-        }
+    effect(({ scene }) =>
+      scene.context.effect(({ viewMatrix, viewportRect }) => {
+        $.viewMatrix = viewMatrix
+        $.viewportRect = viewportRect
       })
     )
 
-    effect.debounce(50).desync(({ arrowEl, contain, popupRect, popupDest }) => {
-      arrowEl.style.opacity = !contain && popupRect.pos.roundSelf().equals(popupDest.pos.roundSelf())
-        ? '0'
-        : '1.0'
-    })
+    // draw
 
-    effect(({ popupRect }) => {
-      $.contentsMatrix = new Matrix().translateSelf(popupRect.x, popupRect.y)
-    })
+    effect.raf.desync(({ host, rect, scene }) => {
+      const p = rect.contain(scene.viewportRect)
 
-    $.arrowMatrixString = reduce.raf.desync(({ arrowMatrix }) => arrowMatrix.toString())
+      host.style.transform = `translate(${p.x}px, ${p.y}px)`
+      // new Matrix()
+      //   .translateSelf(p.x, p.y)
+      //   .toString()
 
-    $.contentsMatrixString = reduce.raf.desync(({ contentsMatrix }) => contentsMatrix.toString())
-
-    effect(({ arrowEl, arrowMatrixString }) => {
-      arrowEl.style.transform = arrowMatrixString
-    })
-
-    effect(({ contents, contentsMatrixString }) => {
-      contents.style.transform = contentsMatrixString
-    })
-
-    //
-    // get positions and boundaries
-    //
-
-    $.updateTarget = reduce(({ box, scene, popup, target }) =>
-      mutating(() => {
-        $.boxRect = box.rect // ?? Rect.fromElement(box)
-        $.targetRect = box.itemRectsMap.get(target) ?? Rect.fromElement(target)
-        if (!$.targetRect) {
-          console.warn('Target not found in box itemRectsMap', target)
-          return
-        }
-        $.animSettings = box.animSettings
-
-        if (box.matrix) {
-          $.targetRect = $.targetRect.transform(box.matrix)
-        }
-
-        $.targetRect.translateSelf($.boxRect)
-
-        scene.updatePopup(
-          popup,
-          pick($, [
-            'boxRect',
-            'targetRect',
-            'viewportRect',
-            'arrowRect',
-            'arrowInner',
-          ]) as Popup
-        )
-      })
-    )
-
-    // TODO: viewport should go to the scene
-
-    const getViewport = () =>
-      new Rect(
-        document.scrollingElement!.scrollLeft,
-        document.scrollingElement!.scrollTop,
-        window.visualViewport.width,
-        window.visualViewport.height
-      )
-
-    const updateViewport = queue.task(() =>
-      mutate(() => {
-        $.viewportRect = getViewport()
-      })
-    )
-
-    updateViewport()
-
-    effect(({ updateTarget }) => {
-      updateTarget()
-      updateViewport()
-      return on(window).scroll.passive(() => {
-        updateViewport()
-      })
-    })
-
-    effect(({ box, updateTarget }) =>
-      chain(
-        on(box).resize(updateTarget),
-        on(box).scroll(updateTarget)
-      )
-    )
-
-    effect(({ box, scene, updateTarget }) =>
-      onresize(
-        box,
-        queue.task(() => {
-          updateTarget()
-          updateViewport()
-          scene.update()
+      if (!host.placed) {
+        setTimeout(() => {
+          host.placed = true
         })
-      )
-    )
-    effect(({ host, updateTarget }) => onresize(host, updateTarget))
+      }
+    })
 
-    render(({ arrowInner }) => (
+    // initial draw in order to prevent animation
+    // TODO: different animation? reveal pop zoom in or something
+
+    render(() => (
       <>
         <style>{style}</style>
-        <div ref={ref.contents} part="contents">
-          <slot part="inner"></slot>
-          <svg
-            ref={ref.arrowEl}
-            part="arrow"
-            viewBox="-2 -2 17 22"
-            preserveAspectRatio="none"
-            width="100%"
-            height="100%"
-          >
-            {arrowInner
-              ? <path d="M 0 0 L 15 10 L 0 20 L 3 10 Z" />
-              : <path d="M 0 0 L 15 10 L 0 20" />}
-          </svg>
-        </div>
+        <slot ref={ref.contents} part="contents"></slot>
       </>
     ))
   })
