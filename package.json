@@ -3,7 +3,7 @@
   "author": "stagas",
   "short": "stagas/x-popup",
   "description": "Popup Web Component used for tooltips and context menus",
-  "version": "0.0.2",
+  "version": "1.0.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -78,12 +78,12 @@
   },
   "dependencies": {
     "everyday-utils": "^1.0.0",
-    "geometrik": "^0.0.1",
-    "json-objectify": "^0.0.1",
+    "geometrik": "^1.0.0",
+    "json-objectify": "^1.0.0",
     "relative-mouse": "^1.0.1",
-    "serialize-whatever": "^0.0.1",
-    "sigl": "^0.0.9",
-    "synced-set": "^0.0.1",
-    "x-surface": "^0.0.3"
+    "serialize-whatever": "^1.0.0",
+    "sigl": "^1.0.0",
+    "synced-set": "^1.0.0",
+    "x-surface": "^1.0.0"
   }
 }
