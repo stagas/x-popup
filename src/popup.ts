@@ -1,28 +1,37 @@
-import { cheapRandomId } from 'everyday-utils'
+import $ from 'sigl/worker'
+
+import { cheapRandomId, pick } from 'everyday-utils'
 import { Intersect, Matrix, Placement, Point, Rect } from 'geometrik'
-import { Context, createContext } from 'mixter'
-import { pick } from 'pick-omit'
+
 import { core, PopupScene } from './popup-core'
 
 // @ts-ignore
 const isWorker = (typeof WorkerGlobalScope !== 'undefined' && self instanceof WorkerGlobalScope)
 
 export class Popup {
+  static create(data: Partial<Popup>) {
+    const popup = new Popup(data)
+    popup.attach()
+    popup.create()
+    return popup
+  }
+
   id = cheapRandomId()
   scene?: PopupScene
 
   rect!: Rect
-  destRect = new Rect()
-  prevRect = new Rect()
+  rectDest = new Rect()
+  prevPos = new Point()
 
   placement!: Placement
   originalPlacement!: Placement
   center!: boolean
 
   contentsRect!: Rect
-  targetRect!: Rect
+  destRect!: Rect
 
-  context!: Context<Popup>
+  $!: $.Context<Popup>
+  context!: $.ContextClass<Popup>
 
   viewMatrix?: Matrix
 
@@ -33,11 +42,11 @@ export class Popup {
   collisions = new Map<Popup, Point>()
   viewportIntersection: Intersect = Intersect.None
   exceedsViewport = false
-  targetExceedsViewport = false
-  targetWithinViewport = false
+  destExceedsViewport = false
+  destWithinViewport = false
 
   constructor(data: Partial<Popup> = {}) {
-    this.create(data)
+    Object.assign(this, data)
   }
 
   toJSON() {
@@ -49,12 +58,12 @@ export class Popup {
     )
   }
 
-  create(this: Popup, data: Partial<Popup>) {
-    Object.assign(this, data)
+  attach(this: Popup) {
+    $.ContextClass.attach(this)
+  }
 
-    const $ = this.context = createContext<Popup>(this)
-    const { reduce } = $
-
-    $.place = reduce(({ contentsRect, targetRect }) => placement => contentsRect.place(targetRect, placement))
+  create(this: Popup) {
+    const { $ } = this
+    $.place = $.reduce(({ contentsRect, destRect }) => placement => contentsRect.place(destRect, placement))
   }
 }

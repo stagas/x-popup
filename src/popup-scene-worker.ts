@@ -1,7 +1,9 @@
+import $ from 'sigl/worker'
+
 import { shuffle } from 'everyday-utils'
-import { Intersect, Matrix, Placement, Point, Polygon, Rect } from 'geometrik'
-import { chain, Context, createContext, on, queue } from 'mixter'
+import { Intersect, Matrix, Point, Polygon, Rect } from 'geometrik'
 import { SyncedSet } from 'synced-set'
+
 import { Popup } from './popup'
 import { core, PopupScene } from './popup-core'
 
@@ -14,7 +16,8 @@ export class PopupSceneWorker implements PopupScene {
   viewportRect!: Rect
   viewMatrix!: Matrix
 
-  context!: Context<PopupScene>
+  $!: $.Context<PopupSceneWorker> & typeof $
+  context!: $.ContextClass<PopupSceneWorker>
 
   solveCollisions?: (popups: Popup[]) => void
   applyCollisions?: (popups: Popup[]) => void
@@ -30,23 +33,25 @@ export class PopupSceneWorker implements PopupScene {
   touchesOther?: (popup: Popup, popups: Popup[]) => boolean
 
   constructor() {
+    $.ContextClass.attach(this as any, $)
     this.create()
   }
 
   create(this: PopupSceneWorker) {
-    // @ts-ignore
-    const $ = this.context = createContext<PopupSceneWorker>(this)
-    const { callback, effect, reduce } = $
+    const { $ } = this
+
+    //!? 'popup scene worker create'
 
     // connect to local remote
 
-    $.remote = reduce(() => self as unknown as MessagePort)
+    $.remote = $.reduce(() => self as unknown as MessagePort)
 
     // popups synced set
 
-    $.popups = reduce(({ remote }) =>
+    $.popups = $.reduce(({ remote }) =>
       new SyncedSet({
-        send: queue.raf((payload, cb) => {
+        send: $.queue.throttle(10).last.next((payload, cb) => {
+          //!? 'sending'
           remote.postMessage({ popups: core.serialize(payload) })
           cb()
         }),
@@ -58,11 +63,14 @@ export class PopupSceneWorker implements PopupScene {
       })
     )
 
-    effect(({ popups }) =>
-      chain(
-        on(popups).add(({ detail: popup }) => {
+    $.effect(({ popups }) =>
+      $.chain(
+        $.on(popups).add(({ detail: popup }) => {
+          popup.attach()
+          popup.create()
           popup.scene = this as PopupScene
 
+          // console.log(popups)
           // popup.context.effect.once(({ placement }) => {
           //   popup.originalPlacement = placement
           // })
@@ -75,19 +83,22 @@ export class PopupSceneWorker implements PopupScene {
 
     // receive data from local
 
-    effect(({ popups, remote, animate }) => {
+    let loops = 0
+
+    $.effect(({ popups, remote, animate }) => {
       remote.onmessage = ({ data }) => {
         if (data.popups) {
           popups.receive(core.deserialize(data.popups))
         } else {
-          Object.assign(this, core.deserialize(data))
+          Object.assign($, core.deserialize(data))
         }
-
+        // console.log('RECEIVE', data)
         animate()
+        // loops = 0
       }
     })
 
-    $.animate = reduce((
+    $.animate = $.reduce((
       {
         popups,
         integrate,
@@ -99,106 +110,122 @@ export class PopupSceneWorker implements PopupScene {
         isMoving,
       },
     ) =>
-      queue.raf(() => {
+      $.queue.raf(() => {
+        //!? 'animating'
+
         const pp = [...popups] // .filter(p => p.rect && p.destRect)
 
         shuffle(pp)
 
         placePopups(pp)
-        integrate(pp, 0.32)
+        integrate(pp, 1)
 
-        for (let i = 0; i < 30; i++) {
-          shuffle(pp)
+        for (let i = 0; i < 2; i++) {
+          //   shuffle(pp)
 
           solveCollisions(pp)
           applyCollisions(pp)
-          integrate(pp, 0.45)
+          integrate(pp, 1)
 
           examineBoundaries(pp)
           containViewport(pp)
-          integrate(pp, 0.92)
+          integrate(pp, 1)
         }
 
-        examineBoundaries(pp)
-        containViewport(pp)
-        integrate(pp, 0.45)
+        // examineBoundaries(pp)
+        // containViewport(pp)
+        // integrate(pp, 0.99)
 
-        if (isMoving(pp)) $.animate!()
+        if (++loops < 5 && isMoving(pp)) {
+          //!? 'looping anim'
+          $.animate!()
+        } else loops = 0
       })
     )
 
     $.integrate = (popups, amount = 0.5) => {
       for (const p of popups) {
         if (!p.rect) {
-          p.rect = p.destRect.clone()
+          p.rect = p.rectDest.clone()
         } else {
-          const d = p.destRect.pos.screen(p.rect.pos)
-          p.rect = p.rect.translate(d.scale(amount * (p.targetExceedsViewport ? 1 : 0.6)))
-          p.destRect.set(p.rect)
+          const d = p.rectDest.pos.screen(p.rect.pos)
+          p.rect.translateSelf(d.scaleSelf(amount * (p.destExceedsViewport ? 1 : 0.4)))
+          p.rectDest = p.rect.clone()
         }
       }
     }
 
     $.isMoving = popups => {
       for (const p of popups) {
-        const prev = p.prevRect.pos
-        p.prevRect = p.rect.clone()
-        if (prev.screen(p.rect.pos).absoluteSum() > (p.targetExceedsViewport ? 8 : 5)) {
+        if (p.prevPos.screen(p.rect.pos).absoluteSum() > (p.destExceedsViewport ? 45 : 1)) {
+          p.prevPos.set(p.rect.pos)
           return true
         }
+        p.prevPos.set(p.rect.pos)
       }
       return false
     }
 
-    const placementChoices: Placement[] = ['nwr', 's', 'w', 'e'] // , 'nw', 'ne', 'sw', 'se']
+    // const placementChoices: Placement[] = ['nwr', 's', 'w', 'e'] // , 'nw', 'ne', 'sw', 'se']
 
-    $.placePopup = reduce(({ touchesOther }) =>
-      callback(({ viewMatrix }) =>
-        (popup, popups) => {
-          // const { viewportRect } = $
-          const lastValidPlacement = popup.placement ?? popup.originalPlacement
+    $.placePopup = popup => {
+      const target = popup.placement ?? popup.originalPlacement
+      popup.rectDest = popup.place!(target)
+    }
 
-          let target = popup.placement
-          if (popup.targetWithinViewport && !popup.exceedsViewport && viewMatrix?.a >= 0.6) {
-            target = popup.originalPlacement
-          }
+    // $.placePopup = $.reduce(({ touchesOther }) =>
+    //   // $.with(({ viewMatrix }) =>
+    //     (popup, popups) => {
+    //       const target = popup.placement ?? popup.originalPlacement
+    //       // if (popup.destWithinViewport && !popup.exceedsViewport) { //} && viewMatrix?.a >= 0.15) {
+    //       // }
+    //       popup.rectDest = popup.place!(target)
+    //       // const lastValidPlacement = popup.placement ?? popup.originalPlacement
 
-          if (target && popup.targetWithinViewport && viewMatrix?.a > 0.42) {
-            for (let i = 0; i < placementChoices.length; i++) {
-              popup.destRect = popup.place!(target)
+    //       // let target = popup.placement
+    //       // if (
+    //       //   popup.originalPlacement && popup.destWithinViewport && !popup.exceedsViewport && viewMatrix?.a >= 0.15
+    //       // ) {
+    //       //   target = popup.originalPlacement
+    //       // }
 
-              if (!touchesOther(popup, popups)) {
-                if (target !== popup.placement) {
-                  popup.placement = target
-                }
-                return
-              }
+    //       // if (target && popup.destWithinViewport && viewMatrix?.a > 0.42) {
+    //       //   for (let i = 0; i < placementChoices.length; i++) {
+    //       //     popup.rectDest = popup.place!(target)
 
-              target = placementChoices[(placementChoices.indexOf(target) + 1) % placementChoices.length]
-            }
-          }
+    //       //     if (!touchesOther(popup, popups)) {
+    //       //       if (target !== popup.placement) {
+    //       //         popup.placement = target
+    //       //       }
+    //       //       return
+    //       //     }
 
-          popup.destRect = popup.place!(lastValidPlacement)
-        }
-      )
-    )
+    //       //     target = placementChoices[(placementChoices.indexOf(target) + 1) % placementChoices.length]
+    //       //   }
+    //       // }
+
+    //       // popup.rectDest = popup.place!(lastValidPlacement)
+    //     }
+    //   // )
+    // )
 
     $.touchesOther = (popup, popups) => {
       for (const p of popups) {
         if (p === popup) continue
+        if (!p.rect || !p.destRect) continue
         // if (p.exceedsViewport) continue
         // if (!p.targetRect.intersectsRect(viewportRect)) continue
 
-        const touchesOtherPopup = popup.destRect.intersectsRect(p.rect)
-        const touchesOtherTarget = popup.destRect.intersectsRect(p.targetRect)
-        if (touchesOtherPopup || touchesOtherTarget) {
+        const touchesOtherPopup = popup.rectDest.intersectsRect(p.rectDest)
+        const touchesOtherDest = popup.rectDest.intersectsRect(p.destRect)
+        if (touchesOtherPopup || touchesOtherDest) {
           return true
         }
       }
       return false
     }
 
-    $.placePopups = reduce(({ placePopup }) =>
+    $.placePopups = $.reduce(({ placePopup }) =>
       popups => {
         for (const p of popups) {
           placePopup(p, popups)
@@ -206,83 +233,77 @@ export class PopupSceneWorker implements PopupScene {
       }
     )
 
-    $.examineBoundaries = callback(({ viewportRect }) =>
+    $.examineBoundaries = $.with(({ viewportRect }) =>
       popups => {
         for (const p of popups) {
           p.exceedsViewport = !p.rect.withinRect(viewportRect)
           p.viewportIntersection = p.exceedsViewport ? p.rect.intersectionRect(viewportRect) : 0
-          p.targetExceedsViewport = !p.targetRect.intersectsRect(viewportRect)
-          p.targetWithinViewport = !p.targetExceedsViewport && p.targetRect.withinRect(viewportRect)
+          p.destExceedsViewport = !p.destRect.intersectsRect(viewportRect)
+          p.destWithinViewport = !p.destExceedsViewport && p.destRect.withinRect(viewportRect)
         }
       }
     )
 
-    $.containViewport = callback(({ viewportRect }) =>
+    $.containViewport = $.with(({ viewportRect }) =>
       popups => {
         for (const p of popups) {
-          if (p.targetExceedsViewport) {
+          if (p.destExceedsViewport) {
             const tp = p.rect.touchPoint(
               viewportRect.zoomLinear(p.contentsRect.size.scale(-2))
             )
-            p.destRect = p.rect.translate(tp.screen(p.rect.pos))
-          } else if (!p.targetWithinViewport) {
-            p.destRect = p.rect.contain(viewportRect)
+            p.rectDest.set(p.rect.translate(tp.screen(p.rect.pos)))
+          } else if (!p.destWithinViewport) {
+            p.rectDest.set(p.rect.contain(viewportRect))
           }
         }
       }
     )
 
-    $.solveCollisions = reduce(() =>
-      (popups: Popup[]) => {
-        for (const a of popups) {
+    $.solveCollisions = (popups: Popup[]) => {
+      for (const a of popups) {
+        a.collisions.clear()
+
+        for (const b of popups) {
+          if (a === b) continue
+
+          if (a.rect.intersectsRect(b.rect)) {
+            const tp = a.rect.touchPoint(b.rect)
+            const d = tp.screenSelf(a.rect)
+            a.collisions.set(b, d)
+          }
+        }
+      }
+    }
+
+    $.applyCollisions = (popups: Popup[]) => {
+      for (const a of popups) {
+        if (a.collisions.size) {
+          const c = Polygon
+            .sum([...a.collisions.values()])
+            .normalizeSelf(a.collisions.size)
+
+          if (
+            (a.viewportIntersection & Intersect.Left)
+            || (a.viewportIntersection & Intersect.Right)
+          ) {
+            c.y *= 1.025
+            c.x *= 0.65
+          }
+
+          if (
+            (a.viewportIntersection & Intersect.Top)
+            || (a.viewportIntersection & Intersect.Bottom)
+          ) {
+            c.x *= 1.025
+            c.y *= 0.65
+          }
+
+          a.rectDest = a.rect.translate(c)
+
           a.collisions.clear()
-
-          for (const b of popups) {
-            if (a === b) continue
-
-            if (a.rect.intersectsRect(b.rect)) {
-              const tp = a.rect.touchPoint(b.rect)
-              const d = tp.screenSelf(a.rect)
-              a.collisions.set(b, d)
-            }
-          }
         }
       }
-    )
-
-    $.applyCollisions = reduce(() =>
-      callback(() =>
-        (popups: Popup[]) => {
-          for (const a of popups) {
-            if (a.collisions.size) {
-              const c = Polygon
-                .sum([...a.collisions.values()])
-                .normalizeSelf(a.collisions.size)
-
-              if (
-                (a.viewportIntersection & Intersect.Left)
-                || (a.viewportIntersection & Intersect.Right)
-              ) {
-                c.y *= 1.025
-                c.x *= 0.65
-              }
-
-              if (
-                (a.viewportIntersection & Intersect.Top)
-                || (a.viewportIntersection & Intersect.Bottom)
-              ) {
-                c.x *= 1.025
-                c.y *= 0.65
-              }
-
-              a.destRect = a.rect.translate(c)
-
-              a.collisions.clear()
-            }
-          }
-        }
-      )
-    )
+    }
   }
 }
 
