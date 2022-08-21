@@ -1,12 +1,10 @@
-import $ from 'sigl/worker'
+import $ from 'sigl'
 
-import { cheapRandomId, pick } from 'everyday-utils'
-import { Intersect, Matrix, Placement, Point, Rect } from 'geometrik'
+import { cheapRandomId } from 'everyday-utils'
+import { Intersect, Matrix, Placement, Point, Rect } from 'sigl'
 
-import { core, PopupScene } from './popup-core'
-
-// @ts-ignore
-const isWorker = (typeof WorkerGlobalScope !== 'undefined' && self instanceof WorkerGlobalScope)
+import { SurfaceElement, SurfaceState } from 'x-surface'
+import { PopupScene } from './popup-scene'
 
 export class Popup {
   static create(data: Partial<Popup>) {
@@ -19,6 +17,9 @@ export class Popup {
   id = cheapRandomId()
   scene?: PopupScene
 
+  mode?: 'worker' | 'local' = 'local'
+
+  vel = new Point()
   rect!: Rect
   rectDest = new Rect()
   prevPos = new Point()
@@ -45,17 +46,10 @@ export class Popup {
   destExceedsViewport = false
   destWithinViewport = false
 
+  surface?: SurfaceElement
+
   constructor(data: Partial<Popup> = {}) {
     Object.assign(this, data)
-  }
-
-  toJSON() {
-    return pick(
-      this,
-      isWorker
-        ? core.pickFromWorker
-        : core.pickFromLocal
-    )
   }
 
   attach(this: Popup) {
@@ -65,5 +59,11 @@ export class Popup {
   create(this: Popup) {
     const { $ } = this
     $.place = $.reduce(({ contentsRect, destRect }) => placement => contentsRect.place(destRect, placement))
+    $.surface = $.fulfill(({ scene }) => fulfill => scene.$.effect(({ surface }) => fulfill(surface)))
+    $.effect.raf(({ surface, scene, destRect: _ }) => {
+      if (surface.state.is(SurfaceState.Overlay)) {
+        scene?.runCollisions?.()
+      }
+    })
   }
 }

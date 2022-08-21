@@ -2,9 +2,9 @@
 import $ from 'sigl'
 
 import { filterMap } from 'everyday-utils'
-import { Rect } from 'geometrik'
+import { Rect } from 'sigl'
 import { SurfaceElement, SurfaceItemElement, SurfaceMoveElement, SurfaceResizeElement } from 'x-surface'
-import { PopupElement, PopupSceneLocal } from '..'
+import { PopupElement, PopupScene } from '..'
 
 interface ItemElement extends $.Element<ItemElement> {}
 @$.element()
@@ -58,7 +58,7 @@ class SceneElement extends HTMLElement {
   Popup = $.element(PopupElement)
 
   surface?: SurfaceElement
-  popupScene = $(this).reduce(({ surface }) => new PopupSceneLocal(surface))
+  popupScene = $(this).reduce(({ surface }) => new PopupScene(surface))
 
   items = new $.RefSet<ItemElement>([
     { rect: new Rect(0, 0, 100, 100), label: 'one' },

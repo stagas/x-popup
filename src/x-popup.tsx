@@ -1,26 +1,24 @@
 /** @jsxImportSource sigl */
-import $ from 'sigl'
+import $, { Point } from 'sigl'
 
 import type { ValuesOf } from 'sigl'
 import { Matrix, Rect } from 'sigl'
-import { SurfaceElement, SurfaceItemElement, SurfaceState } from 'x-surface'
+import { SurfaceAnimSettings, SurfaceElement, SurfaceItemElement, SurfaceState } from 'x-surface'
 
 import type { Placement } from 'sigl'
 import { Popup } from './popup'
-import type { PopupSceneLocal } from './popup-scene-local'
-import type { PopupSceneWorker } from './popup-scene-worker'
-
-// ${
-//   Object.entries(SurfaceAnimSettings).map(([name, { duration, easing }]) => /*css*/ `
-//     :host([placed][transition=${name}]:not([rigid])) {
-//       transition:
-//         transform ${duration - 20}ms cubic-bezier(${easing}),
-//         opacity 200ms ease-out;
-//     }
-//   `).join('')
-// }
+import type { PopupScene } from './popup-scene'
 
 const style = /*css*/ `
+${
+  Object.entries(SurfaceAnimSettings).map(([name, { duration, easing }]) => /*css*/ `
+    :host([placed][transition=${name}]:not([rigid])) {
+      transition:
+        transform ${duration}ms cubic-bezier(${easing}),
+        opacity 200ms ease-out;
+    }
+  `).join('')
+}
 :host {
   position: absolute;
   transform: matrix(1,0,0,1,0,0);
@@ -42,14 +40,14 @@ const style = /*css*/ `
 :host(:not([placed])) {
   opacity: 0;
 }
-:host(:not([placed]):not([rigid])) {
+/* :host(:not([placed]):not([rigid])) {
   transition: opacity 200ms ease-out;
-}
-:host([placed]:not([rigid])) {
+} */
+/* :host([placed]:not([rigid])) {
   transition:
     transform 150ms ease-out,
     opacity 200ms ease-out;
-}
+} */
 :host([placed][rigid]) {
   transition:
     transform 150ms ease-out;
@@ -80,7 +78,7 @@ export class PopupElement extends HTMLElement {
   @$.attr() transition: ValuesOf<typeof SurfaceState> = SurfaceState.Idle
 
   surface?: SurfaceElement
-  scene?: PopupSceneLocal | PopupSceneWorker
+  scene?: PopupScene
 
   contents?: HTMLDivElement
   contentsRect?: Rect
@@ -90,6 +88,7 @@ export class PopupElement extends HTMLElement {
 
   popup?: Popup
   rect?: Rect
+  pos?: Point
 
   viewMatrix?: Matrix
   viewportRect?: Rect
@@ -103,14 +102,24 @@ export class PopupElement extends HTMLElement {
     })
 
     // place popup in scene
-    $.effect(({ popup, scene }) => (
-      scene.popups.add(popup), () => scene.popups.delete(popup)
-    ))
+    $.effect(({ popup, scene }) => {
+      scene.popups.add(popup)
+      popup.attach()
+      popup.create()
+      $.scene = scene
+      popup.scene = scene as any
+      if ($.rigid) {
+        scene.runCollisions?.()
+      }
+      return () => scene.popups.delete(popup)
+    })
 
     // read data from popup
     $.rect = $.fulfill(({ popup }) => (
       fulfill => popup.$.effect(({ rect }) => fulfill(rect))
     ))
+
+    $.pos = $.reduce(({ rect }) => rect.pos)
 
     // write data to popup
 
@@ -174,40 +183,17 @@ export class PopupElement extends HTMLElement {
         .toString()
     })
 
-    if ($.isMobile) {
-      $.effect.throttle(50).first.last.next(({ transition, hostMatrixString, setHostStyleTransform }) => {
-        if (transition === SurfaceState.Pinching) return
-        setHostStyleTransform(hostMatrixString)
-      })
-      $.effect.throttle(100).last.next(({ transition, hostMatrixString, setHostStyleTransform }) => {
-        if (transition !== SurfaceState.Pinching) return
-        setHostStyleTransform(hostMatrixString)
-      })
-    } else {
-      $.effect.throttle(33.333).last.next(
-        ({ transition, hostMatrixString, setHostStyleTransform }) => {
-          if (transition === SurfaceState.Wheeling) return
-          setHostStyleTransform(hostMatrixString)
-        }
-      )
-      $.effect.throttle(33.333).last.next(({ transition, hostMatrixString, setHostStyleTransform }) => {
-        if (transition !== SurfaceState.Wheeling) return
-        setHostStyleTransform(hostMatrixString)
-      })
-    }
+    $.effect(({ host, pos }) => {
+      const transformString = `translate(${pos.x}px,${pos.y}px)`
 
-    $.setHostStyleTransform = $.reduce(({ host }) =>
-      $.queue.raf(matrixString => {
-        host.style.transform = matrixString
+      host.style.transform = transformString
 
-        // avoid flickering/animations at initial draw
-        if (!host.placed) {
-          setTimeout(() => {
-            host.placed = true
-          }, 100)
-        }
-      })
-    )
+      if (!host.placed) {
+        setTimeout(() => {
+          host.placed = true
+        }, 100)
+      }
+    })
 
     $.render(() => (
       <>
